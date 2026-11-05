@@ -1,0 +1,5 @@
+
+packages: .
+
+program-options
+  ghc-options: -Wall -Werror -O2
