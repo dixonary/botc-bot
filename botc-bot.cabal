@@ -78,6 +78,7 @@ executable botc-bot
                       http-types,
                       unliftio,
                       http-conduit,
+                      bytestring,
                       regex-tdfa,
                       data-default,
                       string-interpolate

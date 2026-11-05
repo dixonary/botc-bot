@@ -21,12 +21,15 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as T
 
+import Data.ByteString.Lazy qualified as BS.L
+
+import Data.Aeson qualified as Aeson
+
 import Text.Regex.TDFA (getAllTextMatches, (=~))
 
 import Data.Function (on)
 
-import UnliftIO (IOException, MonadIO, liftIO)
-import UnliftIO.Exception (try)
+import UnliftIO (MonadIO, liftIO)
 import UnliftIO.MVar
 
 import Data.Maybe
@@ -51,7 +54,7 @@ data Role = Role
   , ability :: Text
   , flavor :: Text
   }
-  deriving (Show, Read, Eq, Generic)
+  deriving (Show, Eq, Generic)
 
 instance ToJSON Role
 instance FromJSON Role
@@ -65,7 +68,10 @@ data AppData = AppData
   , -- Mappings from request messageId to the response messageId
     linkedMessages :: Map (ChannelId, MessageId) MessageId
   }
-  deriving (Show, Read)
+  deriving (Show, Generic)
+
+instance ToJSON AppData
+instance FromJSON AppData
 
 dataFile :: FilePath
 dataFile = "./cached_state"
@@ -76,12 +82,12 @@ dataFile = "./cached_state"
 main :: IO ()
 main = do
   mdata <- do
-    mfile <- try $ read <$> readFile "./cached_state"
+    mfile <- Aeson.decode <$> BS.L.readFile "./cached_state"
     s <- case mfile of
-      Right file -> do
+      Just file -> do
         liftIO $ putStrLn "loaded existing state"
         pure file
-      Left (_ :: IOException) -> do
+      Nothing -> do
         liftIO $ putStrLn "created new state"
         pure
           AppData
@@ -216,7 +222,7 @@ updateData :: (MonadIO m) => MVar AppData -> (AppData -> AppData) -> m ()
 updateData mdata f = liftIO $ do
   modifyMVar_ mdata (pure . f)
   s <- readMVar mdata
-  writeFile dataFile (show s)
+  BS.L.writeFile dataFile (Aeson.encode s)
 
 --------------------------------------------------------------------------------
 -- EMBEDS
