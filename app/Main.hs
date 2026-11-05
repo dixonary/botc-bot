@@ -1,6 +1,5 @@
-{-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
+
+module Main (main) where
 
 import Network.HTTP.Client.Conduit (Response (responseBody))
 import Network.HTTP.Simple
@@ -22,12 +21,15 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as T
 
+import Data.ByteString.Lazy qualified as BS.L
+
+import Data.Aeson qualified as Aeson
+
 import Text.Regex.TDFA (getAllTextMatches, (=~))
 
 import Data.Function (on)
 
-import UnliftIO (IOException, MonadIO, liftIO)
-import UnliftIO.Exception (try)
+import UnliftIO (MonadIO, liftIO)
 import UnliftIO.MVar
 
 import Data.Maybe
@@ -52,23 +54,24 @@ data Role = Role
   , ability :: Text
   , flavor :: Text
   }
-  deriving (Show, Read, Eq, Generic)
+  deriving (Show, Eq, Generic)
 
 instance ToJSON Role
 instance FromJSON Role
 
 -- Internal bot state
 data AppData = AppData
-  { -- Pre-constructed embed data for each character
-    embeds :: Map Text (Maybe CreateEmbed)
-  , -- Pre-loaded role data from botc-data
+  { -- Pre-loaded role data from botc-data
     roles :: Map Text Role
   , -- Mappings from character names to their canonical id
     nameMappings :: Map Text Text
   , -- Mappings from request messageId to the response messageId
     linkedMessages :: Map (ChannelId, MessageId) MessageId
   }
-  deriving (Show, Read)
+  deriving (Show, Generic)
+
+instance ToJSON AppData
+instance FromJSON AppData
 
 dataFile :: FilePath
 dataFile = "./cached_state"
@@ -79,17 +82,16 @@ dataFile = "./cached_state"
 main :: IO ()
 main = do
   mdata <- do
-    mfile <- try $ read <$> readFile "./cached_state"
+    mfile <- Aeson.decode <$> BS.L.readFile "./cached_state"
     s <- case mfile of
-      Right file -> do
+      Just file -> do
         liftIO $ putStrLn "loaded existing state"
         pure file
-      Left (_ :: IOException) -> do
+      Nothing -> do
         liftIO $ putStrLn "created new state"
         pure
           AppData
-            { embeds = Map.empty
-            , roles = Map.empty
+            { roles = Map.empty
             , nameMappings = Map.empty
             , linkedMessages = Map.empty
             }
@@ -148,7 +150,7 @@ eventHandler mdata event = case event of
 
           truncateMessage = ["Showing first 3 characters only." | length ts > 3]
 
-        embeds <- mapM getOrLoadEmbed (take 3 $ L.nub ts)
+        let embeds = fmap makeEmbed (take 3 $ L.nub ts)
 
         pure $
           Just
@@ -175,18 +177,6 @@ eventHandler mdata event = case event of
     pure $ case bestMatch >>= (chars Map.!?) of
       Just r -> Right r
       Nothing -> Left t
-
-  getOrLoadEmbed :: Role -> DiscordHandler CreateEmbed
-  getOrLoadEmbed role = do
-    AppData{embeds} <- readMVar mdata
-
-    case Map.lookup (id role) embeds of
-      Just (Just cdata) -> pure cdata
-      _ -> do
-        embed <- makeEmbed role
-        updateData mdata $ \s' ->
-          s'{embeds = Map.insert (id role) (Just embed) embeds}
-        pure embed
 
 -- | Either prints an error and moves on, or does something with the given value
 printErrorOr :: (Show e) => (a -> DiscordHandler ()) -> Either e a -> DiscordHandler ()
@@ -232,33 +222,27 @@ updateData :: (MonadIO m) => MVar AppData -> (AppData -> AppData) -> m ()
 updateData mdata f = liftIO $ do
   modifyMVar_ mdata (pure . f)
   s <- readMVar mdata
-  writeFile dataFile (show s)
+  BS.L.writeFile dataFile (Aeson.encode s)
 
 --------------------------------------------------------------------------------
 -- EMBEDS
 
 {- | Construct a Discord embed for a given role.
-We don't do this upfront because it downloads the character image. In theory
-we could ask for them all upfront which would speed up the first response for each character by ~100ms, at the expense of downloading all the images on first run.
 -}
-makeEmbed :: Role -> DiscordHandler CreateEmbed
-makeEmbed role = do
+makeEmbed :: Role -> CreateEmbed
+makeEmbed role =
   let
     wikiName = T.replace " " "_" $ name role
     wikiURL = [i|https://wiki.bloodontheclocktower.com/#{wikiName}|]
 
-  liftIO $ print role
-
-  let
     imgSrc = [i|https://botc-data.dixonary.co.uk/image/#{id role}.webp|]
-  charImg <- responseBody <$> (httpBS =<< parseRequest (T.unpack imgSrc))
 
-  pure $
+  in
     def
       { createEmbedTitle = name role
       , createEmbedAuthorName = teamAndEdition role
       , createEmbedDescription = ability role
-      , createEmbedThumbnail = Just $ CreateEmbedImageUpload charImg
+      , createEmbedThumbnail = Just $ CreateEmbedImageUrl imgSrc
       , createEmbedFooterText = "\"" <> flavor role <> "\""
       , createEmbedColor = Just $ color (team role)
       , createEmbedUrl = wikiURL

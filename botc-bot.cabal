@@ -78,6 +78,7 @@ executable botc-bot
                       http-types,
                       unliftio,
                       http-conduit,
+                      bytestring,
                       regex-tdfa,
                       data-default,
                       string-interpolate
@@ -87,4 +88,10 @@ executable botc-bot
     hs-source-dirs:   app
 
     -- Base language which the package is written in.
-    default-language: GHC2021
+    default-language: GHC2024
+
+    -- Globally enabled extensions
+    default-extensions:
+        BlockArguments
+        OverloadedStrings
+        QuasiQuotes

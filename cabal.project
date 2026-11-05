@@ -1,0 +1,7 @@
+
+packages: .
+
+program-options
+  ghc-options: -Wall -Werror -O2
+
+with-compiler: ghc-9.10
