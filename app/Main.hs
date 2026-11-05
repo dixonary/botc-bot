@@ -58,9 +58,7 @@ instance FromJSON Role
 
 -- Internal bot state
 data AppData = AppData
-  { -- Pre-constructed embed data for each character
-    embeds :: Map Text CreateEmbed
-  , -- Pre-loaded role data from botc-data
+  { -- Pre-loaded role data from botc-data
     roles :: Map Text Role
   , -- Mappings from character names to their canonical id
     nameMappings :: Map Text Text
@@ -87,8 +85,7 @@ main = do
         liftIO $ putStrLn "created new state"
         pure
           AppData
-            { embeds = Map.empty
-            , roles = Map.empty
+            { roles = Map.empty
             , nameMappings = Map.empty
             , linkedMessages = Map.empty
             }
@@ -147,7 +144,7 @@ eventHandler mdata event = case event of
 
           truncateMessage = ["Showing first 3 characters only." | length ts > 3]
 
-        embeds <- mapM getOrLoadEmbed (take 3 $ L.nub ts)
+        let embeds = fmap makeEmbed (take 3 $ L.nub ts)
 
         pure $
           Just
@@ -174,18 +171,6 @@ eventHandler mdata event = case event of
     pure $ case bestMatch >>= (chars Map.!?) of
       Just r -> Right r
       Nothing -> Left t
-
-  getOrLoadEmbed :: Role -> DiscordHandler CreateEmbed
-  getOrLoadEmbed role = do
-    AppData{embeds} <- readMVar mdata
-
-    case Map.lookup (id role) embeds of
-      Just cdata -> pure cdata
-      _ -> do
-        let embed = makeEmbed role
-        updateData mdata $ \s' ->
-          s'{embeds = Map.insert (id role) embed embeds}
-        pure embed
 
 -- | Either prints an error and moves on, or does something with the given value
 printErrorOr :: (Show e) => (a -> DiscordHandler ()) -> Either e a -> DiscordHandler ()
