@@ -59,7 +59,7 @@ instance FromJSON Role
 -- Internal bot state
 data AppData = AppData
   { -- Pre-constructed embed data for each character
-    embeds :: Map Text (Maybe CreateEmbed)
+    embeds :: Map Text CreateEmbed
   , -- Pre-loaded role data from botc-data
     roles :: Map Text Role
   , -- Mappings from character names to their canonical id
@@ -180,11 +180,11 @@ eventHandler mdata event = case event of
     AppData{embeds} <- readMVar mdata
 
     case Map.lookup (id role) embeds of
-      Just (Just cdata) -> pure cdata
+      Just cdata -> pure cdata
       _ -> do
-        embed <- makeEmbed role
+        let embed = makeEmbed role
         updateData mdata $ \s' ->
-          s'{embeds = Map.insert (id role) (Just embed) embeds}
+          s'{embeds = Map.insert (id role) embed embeds}
         pure embed
 
 -- | Either prints an error and moves on, or does something with the given value
@@ -237,27 +237,21 @@ updateData mdata f = liftIO $ do
 -- EMBEDS
 
 {- | Construct a Discord embed for a given role.
-We don't do this upfront because it downloads the character image. In theory
-we could ask for them all upfront which would speed up the first response for each character by ~100ms, at the expense of downloading all the images on first run.
 -}
-makeEmbed :: Role -> DiscordHandler CreateEmbed
-makeEmbed role = do
+makeEmbed :: Role -> CreateEmbed
+makeEmbed role =
   let
     wikiName = T.replace " " "_" $ name role
     wikiURL = [i|https://wiki.bloodontheclocktower.com/#{wikiName}|]
 
-  liftIO $ print role
-
-  let
     imgSrc = [i|https://botc-data.dixonary.co.uk/image/#{id role}.webp|]
-  charImg <- responseBody <$> (httpBS =<< parseRequest (T.unpack imgSrc))
 
-  pure $
+  in
     def
       { createEmbedTitle = name role
       , createEmbedAuthorName = teamAndEdition role
       , createEmbedDescription = ability role
-      , createEmbedThumbnail = Just $ CreateEmbedImageUpload charImg
+      , createEmbedThumbnail = Just $ CreateEmbedImageUrl imgSrc
       , createEmbedFooterText = "\"" <> flavor role <> "\""
       , createEmbedColor = Just $ color (team role)
       , createEmbedUrl = wikiURL
