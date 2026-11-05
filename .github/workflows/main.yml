@@ -1,0 +1,39 @@
+name: CI
+
+# when the workflow will run
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+  # Allows manually starting this workflow from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: "Build with ghc-9.10.3"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Haskell
+        id: setup-haskell
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: 9.10.3
+          cabal-version: "latest"
+
+      - name: "Cabal: Update cabal package database, generate build plan"
+        run: |
+          cabal update
+          cabal build --dry-run
+
+      - name: Cache
+        uses: actions/cache@v6
+        with:
+          key: ubuntu-ghc-9.10.3-${{ hashFiles('**/plan.json') }}
+          path: ${{ steps.setup-haskell.outputs.cabal-store }}
+          restore-keys: ubuntu-ghc-9.10.3-
+
+      - name: "Cabal: Build"
+        run: cabal build
