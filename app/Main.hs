@@ -1,6 +1,5 @@
-{-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
+
+module Main (main) where
 
 import Network.HTTP.Client.Conduit (Response (responseBody))
 import Network.HTTP.Simple
