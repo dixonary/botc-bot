@@ -148,7 +148,7 @@ eventHandler mdata event = case event of
 
           truncateMessage = ["Showing first 3 characters only." | length ts > 3]
 
-        embeds <- mapM getOrLoadEmbed (take 3 ts)
+        embeds <- mapM getOrLoadEmbed (take 3 $ L.nub ts)
 
         pure $
           Just
