@@ -65,6 +65,8 @@ executable botc-bot
     -- Modules included in this executable, other than Main.
     other-modules:
         BotC.Commands
+        BotC.Commands.Help
+        BotC.Commands.Lookup
         BotC.BotState
         BotC.Role
 

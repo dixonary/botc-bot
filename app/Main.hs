@@ -28,6 +28,8 @@ import Prelude hiding (id)
 
 import BotC.Commands
 import BotC.BotState
+import BotC.Commands.Lookup
+import BotC.Commands.Help
 
 --------------------------------------------------------------------------------
 -- DATA
@@ -86,3 +88,6 @@ main = do
         , discordOnLog = \s -> T.putStrLn s >> T.putStrLn ""
         }
   T.putStrLn userFacingError
+
+commands :: [Command]
+commands = [help commands, lookupCharacter]
