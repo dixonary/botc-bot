@@ -1,9 +1,6 @@
 
 module Main (main) where
 
-import Network.HTTP.Client.Conduit (Response (responseBody))
-import Network.HTTP.Simple
-
 import Discord
 
 import qualified Control.Monad.Trans.Reader as Reader
@@ -29,7 +26,6 @@ import Control.Monad
 
 import Prelude hiding (id)
 
-import BotC.Role
 import BotC.Commands
 import BotC.BotState
 
@@ -59,16 +55,20 @@ main = do
             }
     newMVar s
 
-  -- On a bot restart, always pull the latest data
-  reloadRoles mdata
 
   token <- T.pack <$> getEnv "DISCORD_TOKEN"
 
   eventMVar <- newEmptyMVar
 
   let start = flip Reader.runReaderT mdata do
+        -- On a bot restart, always pull the latest data
+        reloadRoles
+        -- Initialise all the application commands, and get their event handlers
         handlers <- traverse commandToHandlers commands
-        putMVar eventMVar $ \botstate event -> asum $ (\handler -> handler botstate event) <$> handlers
+        putMVar eventMVar \botstate event ->
+          asum $
+            (\handler -> handler botstate event)
+              <$> handlers
         liftIO $ putStrLn "Ready!"
 
   userFacingError <-
@@ -86,33 +86,3 @@ main = do
         , discordOnLog = \s -> T.putStrLn s >> T.putStrLn ""
         }
   T.putStrLn userFacingError
-
---------------------------------------------------------------------------------
--- FETCHING ROLES
-
-getChars :: IO [Role]
-getChars = do
-  -- Get data from botc-data.dixonary.co.uk
-  req <- parseRequest "https://botc-data.dixonary.co.uk/roles.json"
-  res <- httpJSONEither req
-
-  case responseBody res of
-    Left err -> do
-      putStrLn [i|Error fetching roles: #{show err}|]
-      pure []
-    Right roles -> pure roles
-
-reloadRoles :: MVar BotState -> IO ()
-reloadRoles mdata = do
-  putStrLn "Fetching characters from source..."
-  chars <- getChars
-  putStrLn [i|Found #{show (length chars)} characters.|]
-  modifyMVar_ mdata $ pure . \s ->
-    s
-      { roles =
-          Map.fromList
-            [(id r, r) | r <- chars]
-      , nameMappings =
-          Map.fromList
-            [(T.toLower r.name, id r) | r <- chars]
-      }

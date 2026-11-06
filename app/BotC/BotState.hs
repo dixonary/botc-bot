@@ -12,9 +12,13 @@ module BotC.BotState
   , getLink
   , linkMessages
   , unlinkMessage
+
+  , reloadRoles
   )
   where
 
+import Network.HTTP.Client.Conduit (Response (responseBody))
+import Network.HTTP.Simple
 
 import Discord
 import Discord.Types hiding (Role)
@@ -32,13 +36,15 @@ import UnliftIO.Concurrent (MVar, readMVar, modifyMVar_)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 
+import Data.String.Interpolate (i)
 import Data.Text (Text)
+import Data.Text qualified as T
 
 import Data.ByteString.Lazy qualified as BS.L
 
 import Data.Aeson qualified as Aeson
 
-import BotC.Role (Role)
+import BotC.Role (Role (..))
 
 -- | Bot state for the entire program, stored in an MVar.
 --
@@ -111,3 +117,35 @@ unlinkMessage commandName cid mid = do
       { linkedMessages =
           Map.delete (commandName, cid, mid) (linkedMessages s)
       }
+
+
+--------------------------------------------------------------------------------
+-- FETCHING ROLES
+
+getChars :: IO [Role]
+getChars = do
+  -- Get data from botc-data.dixonary.co.uk
+  req <- parseRequest "https://botc-data.dixonary.co.uk/roles.json"
+  res <- httpJSONEither req
+
+  case responseBody res of
+    Left err -> do
+      putStrLn [i|Error fetching roles: #{show err}|]
+      pure []
+    Right roles -> pure roles
+
+reloadRoles :: BotCHandler ()
+reloadRoles = do
+  liftIO $ putStrLn "Fetching characters from source..."
+  chars <- liftIO getChars
+  liftIO $ putStrLn [i|Found #{show (length chars)} characters.|]
+  modifyBotState \s ->
+    s
+      { roles =
+          Map.fromList
+            [(r.id, r) | r <- chars]
+      , nameMappings =
+          Map.fromList
+            [(T.toLower r.name, r.id) | r <- chars]
+      }
+
