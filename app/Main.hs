@@ -15,7 +15,7 @@ import Data.ByteString.Lazy qualified as BS.L
 
 import Data.Aeson qualified as Aeson
 
-import UnliftIO (liftIO)
+import UnliftIO (liftIO, newIORef, writeIORef, readIORef)
 import UnliftIO.MVar
 
 import Data.Maybe
@@ -60,14 +60,17 @@ main = do
 
   token <- T.pack <$> getEnv "DISCORD_TOKEN"
 
-  eventMVar <- newEmptyMVar
+  -- Uses an IORef instead of an MVar because they're faster and there should
+  -- only ever be one writer but many readers.
+  eventRef <- newIORef \_botState event -> Just $ liftIO $ putStrLn
+    [i|Tried to process event #{show event} before event handler was ready!|]
 
   let start = flip Reader.runReaderT mdata do
         -- On a bot restart, always pull the latest data
         reloadRoles
         -- Initialise all the application commands, and get their event handlers
         handlers <- traverse commandToHandlers commands
-        putMVar eventMVar \botstate event ->
+        writeIORef eventRef \botstate event ->
           asum $
             (\handler -> handler botstate event)
               <$> handlers
@@ -79,12 +82,9 @@ main = do
         { discordToken = token
         , discordOnStart = start
         , discordOnEvent = \event ->
-            tryReadMVar eventMVar >>=
-              \case
-                Nothing -> liftIO $ putStrLn [i|Tried to process event #{show event} before event handler was ready!|]
-                Just evHandler -> flip Reader.runReaderT mdata do
-                  botState <- readBotState
-                  fromMaybe (pure ()) $ evHandler botState event
+            readIORef eventRef >>= \evHandler -> flip Reader.runReaderT mdata do
+              botState <- readBotState
+              fromMaybe (pure ()) $ evHandler botState event
         , discordOnLog = \s -> T.putStrLn s >> T.putStrLn ""
         }
   T.putStrLn userFacingError
