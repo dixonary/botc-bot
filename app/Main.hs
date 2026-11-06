@@ -52,7 +52,6 @@ main = do
         pure
           MkBotState
             { roles = Map.empty
-            , nameMappings = Map.empty
             , linkedMessages = Map.empty
             }
     newMVar s

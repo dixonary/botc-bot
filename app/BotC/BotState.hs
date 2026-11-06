@@ -38,7 +38,6 @@ import Data.Map.Strict qualified as Map
 
 import Data.String.Interpolate (i)
 import Data.Text (Text)
-import Data.Text qualified as T
 
 import Data.ByteString.Lazy qualified as BS.L
 
@@ -52,8 +51,6 @@ import BotC.Role (Role (..))
 data BotState = MkBotState
   { -- | Pre-loaded role data from botc-data.
     roles :: !(Map Text Role)
-  , -- | Mappings from character names to their canonical id.
-    nameMappings :: !(Map Text Text)
   , -- | Mappings from request message and command to the response message.
     linkedMessages :: !(Map (Text, ChannelId, MessageId) MessageId)
   }
@@ -103,7 +100,7 @@ getLink s key = Map.lookup key (linkedMessages s)
 -- | Link a request message to a response message
 linkMessages :: Text -> Message -> Message -> BotCHandler ()
 linkMessages commandName o r = do
-  modifyBotState $ \s ->
+  modifyBotState \s ->
     s
       { linkedMessages =
           Map.insert (commandName, messageChannelId o, messageId o) (messageId r) (linkedMessages s)
@@ -112,7 +109,7 @@ linkMessages commandName o r = do
 -- | Unlink a request message from its response message
 unlinkMessage :: Text -> ChannelId -> MessageId -> BotCHandler ()
 unlinkMessage commandName cid mid = do
-  modifyBotState $ \s ->
+  modifyBotState \s ->
     s
       { linkedMessages =
           Map.delete (commandName, cid, mid) (linkedMessages s)
@@ -144,8 +141,5 @@ reloadRoles = do
       { roles =
           Map.fromList
             [(r.id, r) | r <- chars]
-      , nameMappings =
-          Map.fromList
-            [(T.toLower r.name, r.id) | r <- chars]
       }
 
