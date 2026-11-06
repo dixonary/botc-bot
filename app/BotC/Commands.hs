@@ -1,0 +1,304 @@
+
+module BotC.Commands
+  ( Command (..)
+  , CommandData (..)
+  , commands
+  , commandToHandlers
+  )
+  where
+
+
+import Discord
+import Discord.Requests
+import Discord.Handle (DiscordHandle (discordHandleCache))
+import Discord.Internal.Gateway.Cache
+import Discord.Types hiding (Role)
+import Discord.Interactions
+
+import Control.Monad.Trans.Reader qualified as Reader
+
+
+import Data.List (sortOn)
+import Data.List qualified as L
+
+import Data.Map.Strict qualified as Map
+
+import Data.String.Interpolate (i)
+import Data.Text (Text)
+import Data.Text qualified as T
+
+import Text.Regex.TDFA (getAllTextMatches, (=~))
+
+import Data.Function (on, (&))
+import Data.Functor
+
+import UnliftIO.MVar
+
+import Data.Maybe
+
+import Control.Applicative
+
+import Data.Either (partitionEithers)
+import Prelude hiding (id)
+
+import BotC.Role
+import BotC.BotState
+
+data Command = MkCommand
+  { name :: Text -- ^ Name of the command, shared with application command
+  , helpText :: Text -- ^ Text to display to users
+  , inlineAction :: Text -> Maybe (BotState -> MessageDetailedOpts)
+  -- ^ Parses a message to determine whether to trigger, then returns a message after being given bot context
+  , applicationCommand :: CommandData
+  -- ^ The associated slash command
+  }
+
+data CommandData = MkCommandData
+  { createCommand :: CreateApplicationCommand
+  , interactionResponse :: Interaction -> Maybe (BotState -> InteractionResponse)
+  -- ^ How to respond to an interaction triggered by this slash command
+  }
+
+-- | Register the given command's application command, and then return the event handler for this command.
+commandToHandlers :: Command -> BotCHandler (BotState -> Event -> Maybe (BotCHandler ()))
+commandToHandlers MkCommand {..} = do
+  discordHandle <- liftD Reader.ask
+  cache <- readMVar discordHandle.discordHandleCache.cacheHandleCache
+  let applicationId = cache.cacheApplication.fullApplicationID
+  ac <- restCall_ (CreateGlobalApplicationCommand applicationId applicationCommand.createCommand)
+  let commandId = ac.applicationCommandId
+  pure \botState -> \case
+    MessageCreate m
+      | not (userIsBot (messageAuthor m))
+      , Just getMessage <- inlineAction (messageContent m)
+      -> Just do
+        message <- restCall_ (CreateMessageDetailed (messageChannelId m) (getMessage botState))
+        linkMessages name m message
+    MessageUpdate cid mid
+      | Just linkedId <- getLink botState (name, cid, mid)
+      -> Just do
+        m <- restCall_ $ GetChannelMessage (cid, mid)
+        case inlineAction (messageContent m) of
+          Nothing -> -- couldn't parse a new action, assume it's a user mistake and do nothing
+            pure ()
+          Just getMessage ->
+            void $ restCall_ (EditMessage (cid, linkedId) (getMessage botState))
+    MessageDelete cid mid
+      | Just linkedId <- getLink botState (name, cid, mid)
+      -> Just $ unlinkMessage name cid mid >> restCall_ (DeleteMessage (cid, linkedId))
+    InteractionCreate ic
+      | Just acId <- commandOrAutocompleteACId ic
+      , acId == commandId
+      , Just ir <- applicationCommand.interactionResponse ic
+      -> Just $ restCall_ $
+        CreateInteractionResponse ic.interactionId ic.interactionToken (ir botState)
+    _ -> Nothing
+  where
+  commandOrAutocompleteACId = \case
+    InteractionApplicationCommand {..}
+      -> Just applicationCommandData.applicationCommandDataId
+    InteractionApplicationCommandAutocomplete {..}
+      -> Just applicationCommandData.applicationCommandDataId
+    _ -> Nothing
+
+commands :: [Command]
+commands = [help, lookupCharacter]
+
+lookupCharacter :: Command
+lookupCharacter = MkCommand
+  { name = "lookup"
+  , helpText = "Lookup a character by name. Use as `[[character_name]]` or `/lookup character_name`."
+  , inlineAction = lookupText
+  , applicationCommand = lookupCommand
+  }
+  where
+  matchRegex :: Text
+  matchRegex = "\\[\\[[a-zA-Z ]+\\]\\]"
+
+  lookupEmbedsAndText botState chars = 
+    let (notFound, ts) = partitionEithers $ search botState <$> chars
+
+        nfMessage = case notFound of
+          [] -> []
+          [x] -> [[i|Could not find character: #{x}|]]
+          xs -> [[i|Could not find characters: #{T.intercalate ", " xs}|]]
+
+        truncateMessage = ["Showing first 3 characters only." | length ts > 3]
+
+        embeds = fmap makeEmbed (take 3 $ L.nub ts)
+    in (embeds, T.intercalate "\n" $ nfMessage <> truncateMessage)
+
+  lookupText t = case getAllTextMatches $ t =~ matchRegex of
+    [] -> Nothing
+    titles -> Just \botState ->
+      let inners = map (T.drop 2 . T.dropEnd 2) titles
+      in lookupEmbedsAndText botState inners & \(embeds, content) -> def
+            { messageDetailedEmbeds = Just embeds
+            , messageDetailedContent = content
+            }
+
+  lookupCommand = MkCommandData { createCommand, interactionResponse }
+    where
+    createCommand = CreateApplicationCommandChatInput
+      { createName = "lookup"
+      , createLocalizedName = Nothing
+      , createDescription = "Lookup a character"
+      , createLocalizedDescription = Nothing
+      , createOptions = Just $ OptionsValues
+        [ OptionValueString
+            { optionValueName = "name"
+            , optionValueLocalizedName = Nothing
+            , optionValueDescription = "What character to search for."
+            , optionValueLocalizedDescription = Nothing
+            , optionValueRequired = True
+            , optionValueStringChoices = Left True
+            , optionValueStringMinLen = Just 2
+            , optionValueStringMaxLen = Just 20
+            }
+        ]
+      , createDefaultMemberPermissions = Nothing
+      , createDMPermission = Just True
+      }
+    interactionResponse = \case
+      InteractionApplicationCommand {..}
+        | ApplicationCommandDataChatInput {..} <- applicationCommandData
+        , Just (OptionsDataValues [OptionDataValueString _ (Right nameFragment)]) <- optionsData
+        -> Just \botState -> lookupEmbedsAndText botState [nameFragment] &
+          \(embeds, content) -> InteractionResponseChannelMessage def
+            { interactionResponseMessageEmbeds = Just embeds
+            , interactionResponseMessageContent = Just content
+            }
+      InteractionApplicationCommandAutocomplete {..}
+        | ApplicationCommandDataChatInput {..} <- applicationCommandData
+        , Just (OptionsDataValues [OptionDataValueString _ (Left nameFragment)]) <- optionsData
+        -> Just \botState ->
+            InteractionResponseAutocompleteResult
+          $ InteractionResponseAutocompleteString
+          $ take 25
+          $ (\role -> Choice role.name Nothing role.name)
+            <$> searchResults botState nameFragment
+      _ -> Nothing
+
+  search botState t = case searchResults botState t of
+    [] -> Left t
+    (r : _) -> Right r
+
+  searchResults :: BotState -> Text -> [Role]
+  searchResults botState t =
+    let chars = roles botState
+
+        -- Find the results, then take all the best matches, where:
+        -- - Prefix matches beat suffix matches
+        -- - Among those, shorter names are more likely to be the intended match
+        xs = filter ((T.isInfixOf `on` T.toLower) t) (Map.keys chars)
+        xs' = sortOn T.length xs
+        (as, bs) = L.partition (t `T.isPrefixOf`) xs'
+
+        bestMatches = as <> bs
+
+    in mapMaybe (chars Map.!?) bestMatches
+
+  {- | Construct a Discord embed for a given role.
+  -}
+  makeEmbed :: Role -> CreateEmbed
+  makeEmbed role =
+    let
+      wikiName = T.replace " " "_" $ role.name
+      wikiURL = [i|https://wiki.bloodontheclocktower.com/#{wikiName}|]
+
+      imgSrc = [i|https://botc-data.dixonary.co.uk/image/#{id role}.webp|]
+
+    in
+      def
+        { createEmbedTitle = role.name
+        , createEmbedAuthorName = teamAndEdition role
+        , createEmbedDescription = ability role
+        , createEmbedThumbnail = Just $ CreateEmbedImageUrl imgSrc
+        , createEmbedFooterText = "\"" <> flavor role <> "\""
+        , createEmbedColor = Just $ color (team role)
+        , createEmbedUrl = wikiURL
+        }
+
+  teamAndEdition :: Role -> Text
+  teamAndEdition role =
+    T.intercalate " · " $
+      catMaybes
+        [ Just $ T.toTitle (team role)
+        , case edition role of
+            "tb" -> Just "Trouble Brewing"
+            "snv" -> Just "Sects & Violets"
+            "bmr" -> Just "Bad Moon Rising"
+            "carousel" -> Just "The Carousel"
+            _ -> Nothing
+        ]
+
+  color :: Text -> DiscordColor
+  color "demon" = DiscordColorRed
+  color "minion" = DiscordColorOrange
+  color "outsider" = DiscordColorAqua
+  color "townsfolk" = DiscordColorBlue
+  color "traveller" = DiscordColorPurple
+  color "fabled" = DiscordColorGold
+  color "loric" = DiscordColorGreen
+  color _ = DiscordColorGray
+
+help :: Command
+help = MkCommand
+  { name = "help"
+  , helpText = "Displays help text for commands"
+  , inlineAction = \_ -> Nothing
+  , applicationCommand = helpCommand
+  }
+  where
+  helpCommand = MkCommandData { createCommand, interactionResponse }
+    where
+    createCommand = CreateApplicationCommandChatInput
+      { createName = "help"
+      , createLocalizedName = Nothing
+      , createDescription = "Help with commands"
+      , createLocalizedDescription = Nothing
+      , createOptions = Just $ OptionsValues
+        [ OptionValueString
+            { optionValueName = "name"
+            , optionValueLocalizedName = Nothing
+            , optionValueDescription = "What command to search for."
+            , optionValueLocalizedDescription = Nothing
+            , optionValueRequired = False
+            , optionValueStringChoices = Left True
+            , optionValueStringMinLen = Just 2
+            , optionValueStringMaxLen = Just 20
+            }
+        ]
+      , createDefaultMemberPermissions = Nothing
+      , createDMPermission = Just True
+      }
+    interactionResponse = \case
+      InteractionApplicationCommand {..}
+        | ApplicationCommandDataChatInput {..} <- applicationCommandData
+        -> Just \_botState -> case optionsData of
+          Just (OptionsDataValues [OptionDataValueString _ (Right nameFragment)])
+            | Just command <- L.find (\c -> c.name == nameFragment) commands
+            ->
+              InteractionResponseChannelMessage def
+                { interactionResponseMessageContent = Just command.helpText
+                }
+            | otherwise ->
+              InteractionResponseChannelMessage def
+                { interactionResponseMessageContent = Just $ [i|Sorry, `#{nameFragment}` is not recognised as a valid command|]
+                }
+          _ ->
+              InteractionResponseChannelMessage def
+                { interactionResponseMessageContent = Just $ T.intercalate "\n" $
+                  "Here are all the commands you have access to:"
+                  : fmap
+                    (\c -> [i|- `#{c.name}`: #{c.helpText}|])
+                    commands
+                }
+      InteractionApplicationCommandAutocomplete {..}
+        | ApplicationCommandDataChatInput {..} <- applicationCommandData
+        , Just (OptionsDataValues [OptionDataValueString _ (Left nameFragment)]) <- optionsData
+        -> Just \_botState ->
+            InteractionResponseAutocompleteResult
+          $ InteractionResponseAutocompleteString
+          $ (\command -> Choice command.name Nothing command.name) <$> filter ((nameFragment `T.isInfixOf`) . (.name)) commands
+      _ -> Nothing
