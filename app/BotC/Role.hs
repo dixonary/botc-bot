@@ -10,7 +10,7 @@ import Data.Text (Text)
 
 import Data.Aeson (ToJSONKey, FromJSONKey)
 
-newtype RoleId = MkRoleId Text
+newtype RoleId = MkRoleId { unRoleId :: Text }
   deriving newtype (Show, Eq, Ord, ToJSON, FromJSON, ToJSONKey, FromJSONKey)
 
 -- | A role in Blood on the Clocktower (with some data trimmed from the

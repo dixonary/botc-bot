@@ -53,6 +53,7 @@ main = do
           MkBotState
             { roles = Map.empty
             , linkedMessages = Map.empty
+            , cachedIcons = MkImageData Map.empty
             }
     newMVar s
 
