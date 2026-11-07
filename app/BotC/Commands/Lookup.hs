@@ -132,7 +132,7 @@ lookupCharacter = MkCommand
       wikiName = T.replace " " "_" $ role.name
       wikiURL = [i|https://wiki.bloodontheclocktower.com/#{wikiName}|]
 
-      imgSrc = [i|https://botc-data.dixonary.co.uk/image/#{id role}.webp|]
+      imgSrc = [i|https://botc-data.dixonary.co.uk/image/#{role.id.unRoleId}.webp|]
 
     in
       def

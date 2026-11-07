@@ -7,6 +7,8 @@ module BotC.BotState
   , modifyBotState
   , dataFile
 
+  , ImageData (..)
+
   , restCall_
 
   , getLink
@@ -39,11 +41,21 @@ import Data.Map.Strict qualified as Map
 import Data.String.Interpolate (i)
 import Data.Text (Text)
 
+import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BS.L
 
 import Data.Aeson qualified as Aeson
 
 import BotC.Role
+
+newtype ImageData = MkImageData (Map Text BS.ByteString)
+  deriving (Show)
+
+instance FromJSON ImageData where
+  parseJSON _ = pure $ MkImageData mempty
+
+instance ToJSON ImageData where
+  toJSON _ = Aeson.Null
 
 -- | Bot state for the entire program, stored in an MVar.
 --
@@ -53,6 +65,7 @@ data BotState = MkBotState
     roles :: !(Map RoleId Role)
   , -- | Mappings from request message and command to the response message.
     linkedMessages :: !(Map (Text, ChannelId, MessageId) MessageId)
+  , cachedIcons :: !ImageData
   }
   deriving (Show, Generic)
 
