@@ -19,10 +19,12 @@ import Text.Regex.TDFA (getAllTextMatches, (=~))
 
 import Data.Function (on, (&))
 import Data.Functor
+import Control.Monad ((<=<))
 
 import Data.Maybe
 
 import Data.Either (partitionEithers)
+
 import Prelude hiding (id)
 
 import BotC.Role
@@ -38,7 +40,7 @@ lookupCharacter = MkCommand
   }
   where
   matchRegex :: Text
-  matchRegex = "\\[\\[[a-zA-Z ]+\\]\\]"
+  matchRegex = "\\[\\[[a-zA-Z \\-]+\\]\\]"
 
   lookupEmbedsAndText botState chars = 
     let (notFound, ts) = partitionEithers $ search botState <$> chars
