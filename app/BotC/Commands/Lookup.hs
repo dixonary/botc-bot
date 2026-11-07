@@ -40,7 +40,7 @@ lookupCharacter = MkCommand
   }
   where
   matchRegex :: Text
-  matchRegex = "\\[\\[[a-zA-Z \\-]+\\]\\]"
+  matchRegex = "\\[\\[[a-zA-Z \\-\\']+\\]\\]"
 
   lookupEmbedsAndText botState chars = 
     let (notFound, ts) = partitionEithers $ search botState <$> chars
