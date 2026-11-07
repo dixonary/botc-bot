@@ -19,10 +19,12 @@ import Text.Regex.TDFA (getAllTextMatches, (=~))
 
 import Data.Function (on, (&))
 import Data.Functor
+import Control.Monad ((<=<))
 
 import Data.Maybe
 
 import Data.Either (partitionEithers)
+
 import Prelude hiding (id)
 
 import BotC.Role
@@ -38,7 +40,7 @@ lookupCharacter = MkCommand
   }
   where
   matchRegex :: Text
-  matchRegex = "\\[\\[[a-zA-Z ]+\\]\\]"
+  matchRegex = "\\[\\[[a-zA-Z \\-\\']+\\]\\]"
 
   lookupEmbedsAndText botState chars = 
     let (notFound, ts) = partitionEithers $ search botState <$> chars
@@ -109,17 +111,18 @@ lookupCharacter = MkCommand
   searchResults :: BotState -> Text -> [Role]
   searchResults botState t =
     let chars = roles botState
+        nameToIds = Map.fromList $ Map.toList chars <&> \(rId, r) -> (r.name, rId)
 
         -- Find the results, then take all the best matches, where:
         -- - Prefix matches beat suffix matches
         -- - Among those, shorter names are more likely to be the intended match
-        xs = filter ((T.isInfixOf `on` T.toLower) t) (Map.keys chars)
+        xs = filter ((T.isInfixOf `on` T.toLower) t) (Map.keys nameToIds)
         xs' = sortOn T.length xs
         (as, bs) = L.partition (t `T.isPrefixOf`) xs'
 
         bestMatches = as <> bs
 
-    in mapMaybe (chars Map.!?) bestMatches
+    in mapMaybe ((chars Map.!?) <=< (nameToIds Map.!?)) bestMatches
 
   {- | Construct a Discord embed for a given role.
   -}
