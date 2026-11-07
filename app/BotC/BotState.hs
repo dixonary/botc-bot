@@ -21,7 +21,7 @@ import Network.HTTP.Client.Conduit (Response (responseBody))
 import Network.HTTP.Simple
 
 import Discord
-import Discord.Types hiding (Role)
+import Discord.Types hiding (Role, RoleId)
 
 import Control.Monad.Trans.Reader qualified as Reader
 import Control.Monad.Trans.Class (MonadTrans(lift))
@@ -43,14 +43,14 @@ import Data.ByteString.Lazy qualified as BS.L
 
 import Data.Aeson qualified as Aeson
 
-import BotC.Role (Role (..))
+import BotC.Role
 
 -- | Bot state for the entire program, stored in an MVar.
 --
 -- Uses strict fields to try and reduce memory use.
 data BotState = MkBotState
   { -- | Pre-loaded role data from botc-data.
-    roles :: !(Map Text Role)
+    roles :: !(Map RoleId Role)
   , -- | Mappings from request message and command to the response message.
     linkedMessages :: !(Map (Text, ChannelId, MessageId) MessageId)
   }
